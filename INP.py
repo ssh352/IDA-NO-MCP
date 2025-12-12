@@ -1,22 +1,33 @@
 # ida_export_for_ai.py
 # IDAPython script to export decompiled functions, strings, memory, imports and exports for AI analysis
+# pyright: reportMissingImports=false
+# pyright: reportMissingModuleSource=false
+#
+# Exports:
+#   decompile/      - Pseudocode per function (with callers/callees in header)
+#   functions.txt   - All functions (addr:name)
+#   xrefs/          - Cross-references TO each function/address
+#   strings.txt     - All strings
+#   imports.txt     - Import table
+#   exports.txt     - Export table (entry points)
+#   memory/         - Raw memory dumps
 
 import os
-import ida_hexrays
-import ida_funcs
-import ida_nalt
-import ida_xref
-import ida_segment
-import ida_bytes
-import ida_entry
-import idautils
-import idc
+import ida_hexrays  # type: ignore
+import ida_funcs  # type: ignore
+import ida_nalt  # type: ignore
+import ida_xref  # type: ignore
+import ida_segment  # type: ignore
+import ida_bytes  # type: ignore
+import ida_entry  # type: ignore
+import idautils  # type: ignore
+import idc  # type: ignore
 
 def get_idb_directory():
     """获取 IDB 文件所在目录"""
     idb_path = ida_nalt.get_input_file_path()
     if not idb_path:
-        import ida_loader
+        import ida_loader  # type: ignore
         idb_path = ida_loader.get_path(ida_loader.PATH_TYPE_IDB)
     return os.path.dirname(idb_path) if idb_path else os.getcwd()
 
@@ -54,6 +65,65 @@ def get_callees(func_ea):
 def format_address_list(addr_list):
     """格式化地址列表为逗号分隔的十六进制字符串"""
     return ", ".join([hex(addr) for addr in addr_list])
+
+def export_functions(export_dir):
+    """Export all functions (addr:name) - replaces list_funcs/lookup_funcs MCP calls"""
+    functions_path = os.path.join(export_dir, "functions.txt")
+
+    func_count = 0
+    with open(functions_path, 'w', encoding='utf-8') as f:
+        f.write("# All Functions\n")
+        f.write("# Format: func-addr:func-name\n")
+        f.write("#" + "=" * 60 + "\n\n")
+
+        for func_ea in idautils.Functions():
+            func_name = idc.get_func_name(func_ea)
+            f.write("{}:{}\n".format(hex(func_ea), func_name))
+            func_count += 1
+
+    print("[*] Functions Summary:")
+    print("    Total functions exported: {}".format(func_count))
+
+def export_xrefs(export_dir):
+    """Export cross-references TO each function - replaces xrefs_to MCP calls"""
+    xrefs_dir = os.path.join(export_dir, "xrefs")
+    ensure_dir(xrefs_dir)
+
+    total_xrefs = 0
+    func_count = 0
+
+    for func_ea in idautils.Functions():
+        func_name = idc.get_func_name(func_ea)
+        xrefs = []
+
+        for ref in idautils.XrefsTo(func_ea, 0):
+            ref_type = "code" if idc.is_code(idc.get_full_flags(ref.frm)) else "data"
+            caller_func = ida_funcs.get_func(ref.frm)
+            caller_name = idc.get_func_name(caller_func.start_ea) if caller_func else "unknown"
+            xrefs.append((ref.frm, ref_type, caller_name))
+
+        if xrefs:
+            output_filename = "{}.txt".format(hex(func_ea))
+            output_path = os.path.join(xrefs_dir, output_filename)
+
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write("# Cross-references TO {}\n".format(hex(func_ea)))
+                f.write("# Function: {}\n".format(func_name))
+                f.write("# Format: from-addr | type | caller-func\n")
+                f.write("#" + "=" * 60 + "\n\n")
+
+                for frm, ref_type, caller_name in sorted(xrefs):
+                    f.write("{} | {} | {}\n".format(hex(frm), ref_type, caller_name))
+
+            total_xrefs += len(xrefs)
+
+        func_count += 1
+        if func_count % 500 == 0:
+            print("[+] Processed {} functions for xrefs...".format(func_count))
+
+    print("[*] Xrefs Summary:")
+    print("    Functions processed: {}".format(func_count))
+    print("    Total xrefs exported: {}".format(total_xrefs))
 
 def export_decompiled_functions(export_dir):
     """导出所有函数的反编译代码"""
@@ -125,7 +195,7 @@ def export_strings(export_dir):
         f.write("# Format: address | length | type | string\n")
         f.write("#" + "=" * 80 + "\n\n")
         
-        for s in idautils.Strings():
+        for s in idautils.Strings():  # type: ignore[call-arg]
             try:
                 string_content = str(s)
                 str_type = "ASCII"
@@ -141,7 +211,7 @@ def export_strings(export_dir):
                     string_content.replace('\n', '\\n').replace('\r', '\\r')
                 ))
                 string_count += 1
-            except Exception as e:
+            except Exception:
                 continue
     
     print("[*] Strings Summary:")
@@ -159,7 +229,7 @@ def export_imports(export_dir):
         
         nimps = ida_nalt.get_import_module_qty()
         for i in range(nimps):
-            module_name = ida_nalt.get_import_module_name(i)
+            _module_name = ida_nalt.get_import_module_name(i)  # noqa: F841
             
             def imp_cb(ea, name, ordinal):
                 nonlocal import_count
@@ -303,23 +373,31 @@ def main():
     
     print("[+] Export directory: {}".format(export_dir))
     print("")
-    
+
+    print("[*] Exporting functions list...")
+    export_functions(export_dir)
+    print("")
+
     print("[*] Exporting strings...")
     export_strings(export_dir)
     print("")
-    
+
     print("[*] Exporting imports...")
     export_imports(export_dir)
     print("")
-    
+
     print("[*] Exporting exports...")
     export_exports(export_dir)
     print("")
-    
+
+    print("[*] Exporting cross-references...")
+    export_xrefs(export_dir)
+    print("")
+
     print("[*] Exporting memory...")
     export_memory(export_dir)
     print("")
-    
+
     if has_hexrays:
         print("[*] Exporting decompiled functions...")
         export_decompiled_functions(export_dir)
