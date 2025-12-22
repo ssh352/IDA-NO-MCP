@@ -20,8 +20,51 @@ import ida_xref  # type: ignore
 import ida_segment  # type: ignore
 import ida_bytes  # type: ignore
 import ida_entry  # type: ignore
+import ida_typeinf  # type: ignore
 import idautils  # type: ignore
 import idc  # type: ignore
+
+_demangle_cache = {}
+
+def get_demangled_name(name, long_form=False):
+    """
+    Return demangled name (cached), fallback to original on failure.
+    Demangling helps LLMs understand C++ class/namespace context instead of opaque mangled symbols.
+    """
+    if not name:
+        return name
+
+    cache_key = (name, long_form)
+    if cache_key in _demangle_cache:
+        return _demangle_cache[cache_key]
+
+    demreq = None
+    try:
+        demreq = idc.get_inf_attr(idc.INF_LONG_DN if long_form else idc.INF_SHORT_DN)
+    except Exception:
+        pass
+
+    if demreq is None:
+        try:
+            demreq = getattr(ida_typeinf, "DEMNAM_COMPLETE", 0) if long_form else getattr(ida_typeinf, "DEMNAM_SIMPLE", 0)
+        except Exception:
+            demreq = 0
+
+    try:
+        demangled = idc.demangle_name(name, demreq)
+    except Exception:
+        demangled = None
+
+    result = demangled if demangled else name
+    _demangle_cache[cache_key] = result
+    return result
+
+def render_name(name):
+    """Prefer demangled name but keep mangled form for traceability."""
+    demangled = get_demangled_name(name)
+    if demangled and demangled != name:
+        return "{} ({})".format(demangled, name)
+    return name
 
 def get_idb_directory():
     """获取 IDB 文件所在目录"""
@@ -77,7 +120,7 @@ def export_functions(export_dir):
         f.write("#" + "=" * 60 + "\n\n")
 
         for func_ea in idautils.Functions():
-            func_name = idc.get_func_name(func_ea)
+            func_name = render_name(idc.get_func_name(func_ea))
             f.write("{}:{}\n".format(hex(func_ea), func_name))
             func_count += 1
 
@@ -93,13 +136,13 @@ def export_xrefs(export_dir):
     func_count = 0
 
     for func_ea in idautils.Functions():
-        func_name = idc.get_func_name(func_ea)
+        func_name = render_name(idc.get_func_name(func_ea))
         xrefs = []
 
         for ref in idautils.XrefsTo(func_ea, 0):
             ref_type = "code" if idc.is_code(idc.get_full_flags(ref.frm)) else "data"
             caller_func = ida_funcs.get_func(ref.frm)
-            caller_name = idc.get_func_name(caller_func.start_ea) if caller_func else "unknown"
+            caller_name = render_name(idc.get_func_name(caller_func.start_ea)) if caller_func else "unknown"
             xrefs.append((ref.frm, ref_type, caller_name))
 
         if xrefs:
@@ -136,7 +179,7 @@ def export_decompiled_functions(export_dir):
     
     for func_ea in idautils.Functions():
         total_funcs += 1
-        func_name = idc.get_func_name(func_ea)
+        func_name = render_name(idc.get_func_name(func_ea))
         
         try:
             dec_obj = ida_hexrays.decompile(func_ea)
@@ -234,7 +277,7 @@ def export_imports(export_dir):
             def imp_cb(ea, name, ordinal):
                 nonlocal import_count
                 if name:
-                    f.write("{}:{}\n".format(hex(ea), name))
+                    f.write("{}:{}\n".format(hex(ea), render_name(name)))
                 else:
                     f.write("{}:ordinal_{}\n".format(hex(ea), ordinal))
                 import_count += 1
@@ -259,9 +302,9 @@ def export_exports(export_dir):
             ordinal = ida_entry.get_entry_ordinal(i)
             ea = ida_entry.get_entry(ordinal)
             name = ida_entry.get_entry_name(ordinal)
-            
+
             if name:
-                f.write("{}:{}\n".format(hex(ea), name))
+                f.write("{}:{}\n".format(hex(ea), render_name(name)))
             else:
                 f.write("{}:ordinal_{}\n".format(hex(ea), ordinal))
             export_count += 1
