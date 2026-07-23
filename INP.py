@@ -122,6 +122,146 @@ def format_address_list(addr_list):
     return ", ".join([hex(addr) for addr in addr_list])
 
 
+SPECIAL_DECOMPILE_SEGMENT_TYPES = (
+    "SEG_XTRN",
+    "SEG_ABSSYM",
+    "SEG_COMM",
+    "SEG_IMEM",
+    "SEG_GRP",
+    "SEG_NULL",
+    "SEG_UNDF",
+    "SEG_IMP",
+)
+SPECIAL_DECOMPILE_SEGMENT_NAMES = {"extern", "extern_tls"}
+MAX_RETRY_FUNC_SIZE = 0x4000
+
+
+def get_segment_name(seg):
+    if seg is None:
+        return "<no-segment>"
+    try:
+        return ida_segment.get_segm_name(seg)
+    except Exception:
+        return "<unknown-segment>"
+
+
+def get_function_size(func):
+    if func is None:
+        return 0
+    return max(0, func.end_ea - func.start_ea)
+
+
+def get_decompile_skip_reason(func_ea):
+    """
+    Return a skip reason for addresses Hex-Rays cannot decompile by design.
+    Imported extern entries are still captured in imports/xrefs, so they should
+    not be counted as decompilation failures.
+    """
+    func = ida_funcs.get_func(func_ea)
+    if func is None:
+        return "no function at address"
+
+    seg = ida_segment.getseg(func.start_ea)
+    if seg is None:
+        return "no segment for function"
+
+    seg_name = get_segment_name(seg)
+    if seg_name.lower() in SPECIAL_DECOMPILE_SEGMENT_NAMES:
+        return "special segment {}".format(seg_name)
+
+    seg_type = getattr(seg, "type", None)
+    for type_name in SPECIAL_DECOMPILE_SEGMENT_TYPES:
+        type_value = getattr(ida_segment, type_name, None)
+        if type_value is not None and seg_type == type_value:
+            return "special segment type {} ({})".format(type_name, seg_name)
+
+    return None
+
+
+def format_hexrays_failure(hf):
+    if hf is None:
+        return ""
+
+    parts = []
+    try:
+        parts.append("code={}".format(hf.code))
+    except Exception:
+        pass
+
+    try:
+        errea = hf.errea
+        badaddr = getattr(idc, "BADADDR", None)
+        if badaddr is None or errea != badaddr:
+            parts.append("ea={}".format(hex(errea)))
+    except Exception:
+        pass
+
+    try:
+        desc = hf.desc()
+        if desc:
+            parts.append("desc={}".format(desc))
+    except Exception:
+        pass
+
+    return ", ".join(parts)
+
+
+def decompile_function_once(func_ea):
+    hf = None
+    try:
+        hf = ida_hexrays.hexrays_failure_t()
+        dec_obj = ida_hexrays.decompile(func_ea, hf)
+    except TypeError:
+        try:
+            dec_obj = ida_hexrays.decompile(func_ea)
+        except Exception as e:
+            return None, "exception: {}".format(e)
+    except Exception as e:
+        return None, "exception: {}".format(e)
+
+    if dec_obj is not None:
+        return dec_obj, None
+
+    reason = "decompile returned None"
+    failure_text = format_hexrays_failure(hf)
+    if failure_text:
+        reason = "{} ({})".format(reason, failure_text)
+    return None, reason
+
+
+def write_decompiled_function(export_dir, func_ea, func_name, dec_obj):
+    decompile_dir = os.path.join(export_dir, "decompile")
+    ensure_dir(decompile_dir)
+
+    dec_str = str(dec_obj)
+    callers = get_callers(func_ea)
+    callees = get_callees(func_ea)
+
+    output_lines = []
+    output_lines.append("/*")
+    output_lines.append(" * func-name: {}".format(func_name))
+    output_lines.append(" * func-address: {}".format(hex(func_ea)))
+    output_lines.append(
+        " * callers: {}".format(format_address_list(callers) if callers else "none")
+    )
+    output_lines.append(
+        " * callees: {}".format(format_address_list(callees) if callees else "none")
+    )
+    output_lines.append(" */")
+    output_lines.append("")
+    output_lines.append(dec_str)
+
+    output_filename = "{}.c".format(hex(func_ea))
+    output_path = os.path.join(decompile_dir, output_filename)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(output_lines))
+
+
+def format_decompiled_write_failure(error):
+    return "write failed: {}".format(error)
+
+
 def export_functions(export_dir):
     """Export all functions (addr:name) - replaces list_funcs/lookup_funcs MCP calls"""
     functions_path = os.path.join(export_dir, "functions.txt")
@@ -191,62 +331,104 @@ def export_decompiled_functions(export_dir):
     """导出所有函数的反编译代码"""
     decompile_dir = os.path.join(export_dir, "decompile")
     ensure_dir(decompile_dir)
+    for stale_log_name in ("decompile_failed.txt", "decompile_skipped.txt"):
+        stale_log_path = os.path.join(export_dir, stale_log_name)
+        if os.path.exists(stale_log_path):
+            os.remove(stale_log_path)
 
     total_funcs = 0
     exported_funcs = 0
+    retried_funcs = 0
+    skipped_funcs = []
+    first_pass_failed_funcs = []
     failed_funcs = []
 
     for func_ea in idautils.Functions():
         total_funcs += 1
         func_name = render_name(idc.get_func_name(func_ea))
 
-        try:
-            dec_obj = ida_hexrays.decompile(func_ea)
-            if dec_obj is None:
-                failed_funcs.append((func_ea, func_name, "decompile returned None"))
-                continue
-
-            dec_str = str(dec_obj)
-            callers = get_callers(func_ea)
-            callees = get_callees(func_ea)
-
-            output_lines = []
-            output_lines.append("/*")
-            output_lines.append(" * func-name: {}".format(func_name))
-            output_lines.append(" * func-address: {}".format(hex(func_ea)))
-            output_lines.append(
-                " * callers: {}".format(
-                    format_address_list(callers) if callers else "none"
-                )
-            )
-            output_lines.append(
-                " * callees: {}".format(
-                    format_address_list(callees) if callees else "none"
-                )
-            )
-            output_lines.append(" */")
-            output_lines.append("")
-            output_lines.append(dec_str)
-
-            output_filename = "{}.c".format(hex(func_ea))
-            output_path = os.path.join(decompile_dir, output_filename)
-
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(output_lines))
-
-            exported_funcs += 1
-
-            if exported_funcs % 100 == 0:
-                print("[+] Exported {} functions...".format(exported_funcs))
-
-        except Exception as e:
-            failed_funcs.append((func_ea, func_name, str(e)))
+        skip_reason = get_decompile_skip_reason(func_ea)
+        if skip_reason:
+            skipped_funcs.append((func_ea, func_name, skip_reason))
             continue
+
+        dec_obj, reason = decompile_function_once(func_ea)
+        if dec_obj is None:
+            first_pass_failed_funcs.append((func_ea, func_name, reason))
+            continue
+
+        try:
+            write_decompiled_function(export_dir, func_ea, func_name, dec_obj)
+        except Exception as e:
+            failed_funcs.append(
+                (func_ea, func_name, format_decompiled_write_failure(e))
+            )
+            continue
+        exported_funcs += 1
+
+        if exported_funcs % 100 == 0:
+            print("[+] Exported {} functions...".format(exported_funcs))
+
+    if first_pass_failed_funcs:
+        print(
+            "[*] Retrying {} non-skipped decompilation failures...".format(
+                len(first_pass_failed_funcs)
+            )
+        )
+
+    for func_ea, func_name, first_reason in first_pass_failed_funcs:
+        func = ida_funcs.get_func(func_ea)
+        func_size = get_function_size(func)
+        if func_size > MAX_RETRY_FUNC_SIZE:
+            failed_funcs.append(
+                (
+                    func_ea,
+                    func_name,
+                    "{}; retry skipped: function size {} exceeds {}".format(
+                        first_reason,
+                        hex(func_size),
+                        hex(MAX_RETRY_FUNC_SIZE),
+                    ),
+                )
+            )
+            continue
+
+        dec_obj, retry_reason = decompile_function_once(func_ea)
+        if dec_obj is None:
+            reason = first_reason
+            if retry_reason and retry_reason != first_reason:
+                reason = "{}; retry: {}".format(first_reason, retry_reason)
+            failed_funcs.append((func_ea, func_name, reason))
+            continue
+
+        try:
+            write_decompiled_function(export_dir, func_ea, func_name, dec_obj)
+        except Exception as e:
+            failed_funcs.append(
+                (
+                    func_ea,
+                    func_name,
+                    "{}; {}".format(first_reason, format_decompiled_write_failure(e)),
+                )
+            )
+            continue
+        exported_funcs += 1
+        retried_funcs += 1
+        print("[+] Retry succeeded for {} ({})".format(hex(func_ea), func_name))
 
     print("\n[*] Decompilation Summary:")
     print("    Total functions: {}".format(total_funcs))
     print("    Exported: {}".format(exported_funcs))
+    print("    Retried successfully: {}".format(retried_funcs))
+    print("    Skipped: {}".format(len(skipped_funcs)))
     print("    Failed: {}".format(len(failed_funcs)))
+
+    if skipped_funcs:
+        skipped_log_path = os.path.join(export_dir, "decompile_skipped.txt")
+        with open(skipped_log_path, "w", encoding="utf-8") as f:
+            for addr, name, reason in skipped_funcs:
+                f.write("{} {} - {}\n".format(hex(addr), name, reason))
+        print("    Skipped list saved to: decompile_skipped.txt")
 
     if failed_funcs:
         failed_log_path = os.path.join(export_dir, "decompile_failed.txt")
