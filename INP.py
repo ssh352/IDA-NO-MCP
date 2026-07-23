@@ -1,10 +1,10 @@
 # ida_export_for_ai.py
-# IDAPython script to export decompiled functions, strings, memory, imports and exports for AI analysis
+# IDAPython script to export pseudocode, strings, memory, imports and exports for AI analysis
 # pyright: reportMissingImports=false
 # pyright: reportMissingModuleSource=false
 #
 # Exports:
-#   decompile/      - Pseudocode per function (with callers/callees in header)
+#   pseudocode/     - Pseudocode per function (with callers/callees in header)
 #   functions.txt   - All functions (addr:name)
 #   xrefs/          - Cross-references TO each function/address
 #   strings.txt     - All strings
@@ -230,8 +230,8 @@ def decompile_function_once(func_ea):
 
 
 def write_decompiled_function(export_dir, func_ea, func_name, dec_obj):
-    decompile_dir = os.path.join(export_dir, "decompile")
-    ensure_dir(decompile_dir)
+    pseudocode_dir = os.path.join(export_dir, "pseudocode")
+    ensure_dir(pseudocode_dir)
 
     dec_str = str(dec_obj)
     callers = get_callers(func_ea)
@@ -252,7 +252,7 @@ def write_decompiled_function(export_dir, func_ea, func_name, dec_obj):
     output_lines.append(dec_str)
 
     output_filename = "{}.c".format(hex(func_ea))
-    output_path = os.path.join(decompile_dir, output_filename)
+    output_path = os.path.join(pseudocode_dir, output_filename)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(output_lines))
@@ -329,9 +329,14 @@ def export_xrefs(export_dir):
 
 def export_decompiled_functions(export_dir):
     """导出所有函数的反编译代码"""
-    decompile_dir = os.path.join(export_dir, "decompile")
-    ensure_dir(decompile_dir)
-    for stale_log_name in ("decompile_failed.txt", "decompile_skipped.txt"):
+    pseudocode_dir = os.path.join(export_dir, "pseudocode")
+    ensure_dir(pseudocode_dir)
+    for stale_log_name in (
+        "failed.txt",
+        "skipped.txt",
+        "decompile_failed.txt",
+        "decompile_skipped.txt",
+    ):
         stale_log_path = os.path.join(export_dir, stale_log_name)
         if os.path.exists(stale_log_path):
             os.remove(stale_log_path)
@@ -371,7 +376,7 @@ def export_decompiled_functions(export_dir):
 
     if first_pass_failed_funcs:
         print(
-            "[*] Retrying {} non-skipped decompilation failures...".format(
+            "[*] Retrying {} non-skipped pseudocode export failures...".format(
                 len(first_pass_failed_funcs)
             )
         )
@@ -416,7 +421,7 @@ def export_decompiled_functions(export_dir):
         retried_funcs += 1
         print("[+] Retry succeeded for {} ({})".format(hex(func_ea), func_name))
 
-    print("\n[*] Decompilation Summary:")
+    print("\n[*] Pseudocode Export Summary:")
     print("    Total functions: {}".format(total_funcs))
     print("    Exported: {}".format(exported_funcs))
     print("    Retried successfully: {}".format(retried_funcs))
@@ -424,18 +429,18 @@ def export_decompiled_functions(export_dir):
     print("    Failed: {}".format(len(failed_funcs)))
 
     if skipped_funcs:
-        skipped_log_path = os.path.join(export_dir, "decompile_skipped.txt")
+        skipped_log_path = os.path.join(export_dir, "skipped.txt")
         with open(skipped_log_path, "w", encoding="utf-8") as f:
             for addr, name, reason in skipped_funcs:
                 f.write("{} {} - {}\n".format(hex(addr), name, reason))
-        print("    Skipped list saved to: decompile_skipped.txt")
+        print("    Skipped list saved to: skipped.txt")
 
     if failed_funcs:
-        failed_log_path = os.path.join(export_dir, "decompile_failed.txt")
+        failed_log_path = os.path.join(export_dir, "failed.txt")
         with open(failed_log_path, "w", encoding="utf-8") as f:
             for addr, name, reason in failed_funcs:
                 f.write("{} {} - {}\n".format(hex(addr), name, reason))
-        print("    Failed list saved to: decompile_failed.txt")
+        print("    Failed list saved to: failed.txt")
 
 
 def export_strings(export_dir):
@@ -444,7 +449,7 @@ def export_strings(export_dir):
 
     string_count = 0
     with open(strings_path, "w", encoding="utf-8") as f:
-        f.write("# Strings exported from IDA\n")
+        f.write("# String Index\n")
         f.write("# Format: address | length | type | string\n")
         f.write("#" + "=" * 80 + "\n\n")
 
@@ -688,7 +693,7 @@ def main(export_path=None):
     print("")
 
     if has_hexrays:
-        print("[*] Exporting decompiled functions...")
+        print("[*] Exporting pseudocode...")
         export_decompiled_functions(export_dir)
 
     print("")
