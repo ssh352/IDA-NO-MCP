@@ -22,6 +22,8 @@ import ida_idaapi
 import ida_ida
 import ida_name
 import ida_pro
+import ida_typeinf
+import idc
 import gc
 from concurrent.futures import ThreadPoolExecutor
 
@@ -64,6 +66,60 @@ _DECOMP_NO_WAIT  = getattr(ida_hexrays, 'DECOMP_NO_WAIT',  0x0001) if ida_hexray
 _DECOMP_NO_CACHE = getattr(ida_hexrays, 'DECOMP_NO_CACHE', 0x0004) if ida_hexrays else 0x0004
 DECOMPILE_FLAGS_BASE = _DECOMP_NO_WAIT  # 基础标志：始终禁止等待框
 DECOMPILE_FLAGS_NOCACHE = _DECOMP_NO_WAIT | _DECOMP_NO_CACHE  # patch 后重新导出时使用
+
+_demangle_cache = {}
+
+
+def get_demangled_name(name, long_form=False):
+    """Return an IDA-demangled name, falling back to the original symbol."""
+    if not name:
+        return name
+
+    cache_key = (name, long_form)
+    if cache_key in _demangle_cache:
+        return _demangle_cache[cache_key]
+
+    demreq = None
+    try:
+        demreq = idc.get_inf_attr(idc.INF_LONG_DN if long_form else idc.INF_SHORT_DN)
+    except Exception:
+        pass
+
+    if demreq is None:
+        try:
+            demreq = (
+                getattr(ida_typeinf, "DEMNAM_COMPLETE", 0)
+                if long_form
+                else getattr(ida_typeinf, "DEMNAM_SIMPLE", 0)
+            )
+        except Exception:
+            demreq = 0
+
+    try:
+        demangled = idc.demangle_name(name, demreq)
+    except Exception:
+        demangled = None
+
+    result = demangled if demangled else name
+    _demangle_cache[cache_key] = result
+    return result
+
+
+def render_name(name):
+    """Prefer demangled names while keeping the mangled lookup key visible."""
+    if not name:
+        return name
+    demangled = get_demangled_name(name)
+    if demangled and demangled != name:
+        return "{} ({})".format(demangled, name)
+    return name
+
+
+def get_rendered_function_name(func_ea):
+    name = ida_funcs.get_func_name(func_ea) or ida_name.get_name(func_ea)
+    if not name:
+        name = "sub_{:X}".format(func_ea)
+    return render_name(name)
 
 
 def get_worker_count():
@@ -841,7 +897,7 @@ class _FuncExportJob(object):
 
             # 记录当前函数的计时信息
             self._current_func_ea = func_ea
-            self._current_func_name = ida_funcs.get_func_name(func_ea) or hex(func_ea)
+            self._current_func_name = get_rendered_function_name(func_ea)
             self._current_func_start_time = time.time()
 
             # 仅在批次开头更新一次等待框（每函数更新在大文件下反而拖慢）
@@ -908,7 +964,7 @@ class _FuncExportJob(object):
                 self.idx += 1
 
                 self._current_func_ea = func_ea
-                self._current_func_name = ida_funcs.get_func_name(func_ea) or hex(func_ea)
+                self._current_func_name = get_rendered_function_name(func_ea)
                 self._current_func_start_time = time.time()
 
                 self._process_one(func_ea)
@@ -959,7 +1015,7 @@ class _FuncExportJob(object):
     # ------------------------------------------------------------------
 
     def _process_one(self, func_ea):
-        func_name = ida_funcs.get_func_name(func_ea)
+        func_name = get_rendered_function_name(func_ea)
         func = ida_funcs.get_func(func_ea)
 
         if func is None:
@@ -1381,7 +1437,7 @@ def export_imports(export_dir):
             def imp_cb(ea, name, ordinal):
                 nonlocal import_count
                 if name:
-                    f.write("{}:{}\n".format(hex(ea), name))
+                    f.write("{}:{}\n".format(hex(ea), render_name(name)))
                 else:
                     f.write("{}:ordinal_{}\n".format(hex(ea), ordinal))
                 import_count += 1
@@ -1409,7 +1465,7 @@ def export_exports(export_dir):
             name = ida_entry.get_entry_name(ordinal)
 
             if name:
-                f.write("{}:{}\n".format(hex(ea), name))
+                f.write("{}:{}\n".format(hex(ea), render_name(name)))
             else:
                 f.write("{}:ordinal_{}\n".format(hex(ea), ordinal))
             export_count += 1
@@ -1558,7 +1614,7 @@ def _ptr_export_get_target_name(target_ea):
             name = ida_funcs.get_func_name(func.start_ea)
     if not name:
         name = "unknown"
-    return _ptr_export_safe_text(name)
+    return _ptr_export_safe_text(render_name(name))
 
 
 def _ptr_export_try_get_string_preview(target_ea):
@@ -1878,8 +1934,8 @@ def export_callgraph(export_dir, max_hops=LARGE_CALLGRAPH_BFS_HOPS, max_nodes=LA
             f.write("# Format: caller_addr | caller_name -> callee_addr | callee_name\n")
             f.write("#" + "=" * 80 + "\n\n")
             for caller, callee in edges:
-                cname = ida_funcs.get_func_name(caller) or hex(caller)
-                cename = ida_funcs.get_func_name(callee) or hex(callee)
+                cname = get_rendered_function_name(caller)
+                cename = get_rendered_function_name(callee)
                 f.write("{:X} | {} -> {:X} | {}\n".format(caller, cname, callee, cename))
         logger.info("Callgraph exported: %d nodes, %d edges", len(visited), len(edges))
     except Exception as e:

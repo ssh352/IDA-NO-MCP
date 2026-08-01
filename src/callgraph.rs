@@ -15,6 +15,7 @@ use anyhow::Result;
 use idalib::IDB;
 
 use crate::config::{LARGE_CALLGRAPH_BFS_HOPS, LARGE_CALLGRAPH_MAX_NODES};
+use crate::names::render_symbol_name;
 
 /// Callees of a function, via code xrefs from its instruction range.
 ///
@@ -122,7 +123,7 @@ pub fn export_callgraph(idb: &IDB, out_dir: &Path) -> Result<(usize, usize)> {
 fn func_name(idb: &IDB, ea: u64) -> String {
     if let Some(f) = idb.function_at(ea.into()) {
         if let Some(n) = f.name() {
-            return n;
+            return render_symbol_name(&n);
         }
     }
     format!("sub_{:X}", ea)

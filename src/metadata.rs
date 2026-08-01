@@ -12,6 +12,7 @@ use anyhow::Result;
 use idalib::IDB;
 
 use crate::config::LARGE_STRING_MIN_LEN;
+use crate::names::render_symbol_name;
 
 /// Export the strings table. `min_len > 0` filters short strings (consolidated mode).
 pub fn export_strings(idb: &IDB, out_dir: &Path, min_len: usize) -> Result<usize> {
@@ -30,7 +31,13 @@ pub fn export_strings(idb: &IDB, out_dir: &Path, min_len: usize) -> Result<usize
             continue;
         }
         let escaped = s.replace('\n', "\\n").replace('\r', "\\r");
-        writeln!(w, "{:X} | {} | {}", u64::from(addr), s.chars().count(), escaped)?;
+        writeln!(
+            w,
+            "{:X} | {} | {}",
+            u64::from(addr),
+            s.chars().count(),
+            escaped
+        )?;
         count += 1;
     }
     w.flush()?;
@@ -53,7 +60,12 @@ pub fn export_exports(idb: &IDB, out_dir: &Path) -> Result<usize> {
     let mut count = 0usize;
     for nm in idb.names().iter() {
         if nm.is_public() {
-            writeln!(w, "{:X}:{}", u64::from(nm.address()), nm.name())?;
+            writeln!(
+                w,
+                "{:X}:{}",
+                u64::from(nm.address()),
+                render_symbol_name(&nm.name())
+            )?;
             count += 1;
         }
     }
@@ -89,7 +101,7 @@ pub fn export_imports(idb: &IDB, out_dir: &Path) -> Result<usize> {
     for nm in idb.names().iter() {
         let a = u64::from(nm.address());
         if import_ranges.iter().any(|(s, e)| a >= *s && a < *e) {
-            writeln!(w, "{:X}:{}", a, nm.name())?;
+            writeln!(w, "{:X}:{}", a, render_symbol_name(&nm.name()))?;
             count += 1;
         }
     }
@@ -98,12 +110,12 @@ pub fn export_imports(idb: &IDB, out_dir: &Path) -> Result<usize> {
 }
 
 /// Run all metadata exports, applying consolidated string filtering.
-pub fn run_all(
-    idb: &IDB,
-    out_dir: &Path,
-    consolidated: bool,
-) -> Result<(usize, usize, usize)> {
-    let min_len = if consolidated { LARGE_STRING_MIN_LEN } else { 0 };
+pub fn run_all(idb: &IDB, out_dir: &Path, consolidated: bool) -> Result<(usize, usize, usize)> {
+    let min_len = if consolidated {
+        LARGE_STRING_MIN_LEN
+    } else {
+        0
+    };
     let s = export_strings(idb, out_dir, min_len)?;
     let e = export_exports(idb, out_dir)?;
     let i = export_imports(idb, out_dir)?;

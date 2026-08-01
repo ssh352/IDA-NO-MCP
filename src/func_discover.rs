@@ -17,6 +17,7 @@
 use idalib::IDB;
 
 use crate::config::{MAX_FUNC_INSN_COUNT, MAX_FUNC_SIZE_FOR_DECOMPILE};
+use crate::names::render_symbol_name;
 
 /// Classification of a single discovered function.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,9 +59,8 @@ pub fn discover_all(idb: &IDB) -> Vec<DiscoveredFunc> {
             continue;
         }
         let end = u64::from(func.end_address());
-        let name = func
-            .name()
-            .unwrap_or_else(|| format!("sub_{:X}", start));
+        let raw_name = func.name().unwrap_or_else(|| format!("sub_{:X}", start));
+        let name = render_symbol_name(&raw_name);
         let flags = func.flags();
 
         // Skip library functions (FUNC_LIB) — matches the Python `func.flags & FUNC_LIB`.
@@ -79,8 +79,8 @@ pub fn discover_all(idb: &IDB) -> Vec<DiscoveredFunc> {
         let size = end.saturating_sub(start);
         let too_big = size > MAX_FUNC_SIZE_FOR_DECOMPILE;
         // Instruction-count guard only matters for decompile candidates.
-        let needs_disasm_fallback = too_big
-            || (kind == FuncKind::Decompile && insn_count_exceeds(idb, start, end));
+        let needs_disasm_fallback =
+            too_big || (kind == FuncKind::Decompile && insn_count_exceeds(idb, start, end));
 
         out.push(DiscoveredFunc {
             start_ea: start,
@@ -115,5 +115,8 @@ fn insn_count_exceeds(idb: &IDB, start: u64, end: u64) -> bool {
 
 /// How many discovered functions are decompile candidates (not lib/extern).
 pub fn count_decompile_candidates(funcs: &[DiscoveredFunc]) -> usize {
-    funcs.iter().filter(|f| f.kind == FuncKind::Decompile).count()
+    funcs
+        .iter()
+        .filter(|f| f.kind == FuncKind::Decompile)
+        .count()
 }

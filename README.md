@@ -217,6 +217,7 @@ idat -A -S"INP.py /tmp/out 0 consolidated" huge_framework.i64
 
 - 自动跳过库函数和无效函数
 - 反编译失败时自动回退到反汇编导出
+- C++/Rust 等符号在 Python 插件路径中优先显示为 `demangled (mangled)`，保留可读名和精确查找名
 - 处理特殊字符和重名函数（添加地址后缀）
 - 生成详细的回退、失败和跳过日志
 - 显示导出进度（每 100 个函数）

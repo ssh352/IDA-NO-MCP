@@ -65,6 +65,7 @@ Each function is exported as a separate `.c` file when decompilation succeeds. I
 
 - Automatically skips library functions and invalid functions
 - Automatically falls back to disassembly export when decompilation fails
+- Python plugin exports C++/Rust-style symbols as `demangled (mangled)` when IDA can demangle them
 - Handles special characters and duplicate function names (adds address suffix)
 - Generates detailed fallback, failure, and skip logs
 - Shows export progress (every 100 functions)

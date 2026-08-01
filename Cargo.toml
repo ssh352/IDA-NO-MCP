@@ -13,6 +13,7 @@ idalib = "0.9"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 rayon = "1"
+rustc-demangle = "0.1"
 
 [build-dependencies]
 idalib-build = "0.9"

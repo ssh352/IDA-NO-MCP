@@ -10,6 +10,7 @@ mod decompile;
 mod func_discover;
 mod hexdump;
 mod metadata;
+mod names;
 mod paths;
 mod writers;
 
