@@ -60,7 +60,13 @@ fn write_chunk(idb: &IDB, path: &Path, start: u64, end: u64, seg_name: &str) -> 
             .join(" ");
         let ascii: String = bytes
             .iter()
-            .map(|&b| if (0x20..=0x7E).contains(&b) { b as char } else { '.' })
+            .map(|&b| {
+                if (0x20..=0x7E).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
             .collect();
         writeln!(w, "{:016X} | {:48} | {}", addr, hex, ascii)?;
         total += line_len;

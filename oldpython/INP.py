@@ -1,5 +1,5 @@
 # ida_export_for_ai.py
-# IDA Plugin to export decompiled functions with disassembly fallback, strings, memory, imports and exports for AI analysis
+# IDA Plugin to export pseudocode with disassembly fallback, strings, memory, imports and exports for AI analysis
 
 import os
 import time
@@ -309,7 +309,7 @@ def get_function_output_subdir(export_type):
     """根据导出类型返回函数输出子目录"""
     if export_type == "disassembly-fallback":
         return "disassembly"
-    return "decompile"
+    return "pseudocode"
 
 
 def get_function_output_relative_path(func_ea, export_type):
@@ -623,7 +623,7 @@ class _FuncExportJob(object):
 
         pct = (self.idx / total * 100) if total else 0
         lines = [
-            "[Stage 6/6] Decompile: {:6d}/{:6d} ({:3.0f}%)".format(self.idx, total, pct),
+            "[Stage 6/6] Pseudocode: {:6d}/{:6d} ({:3.0f}%)".format(self.idx, total, pct),
             "OK={:5d} | Fallback={:5d} | Failed={:5d} | Skip={:5d}".format(
                 self.exported_funcs, len(self.fallback_funcs),
                 len(self.failed_funcs), len(self.skipped_funcs)),
@@ -718,9 +718,9 @@ class _FuncExportJob(object):
                     self.export_mode, self._resolved_mode, self.total_funcs,
                     self._skip_callgraph_walks)
 
-        # legacy 模式需要 decompile/disassembly 子目录；consolidated 模式只写单文件
+        # legacy 模式需要 pseudocode/disassembly 子目录；consolidated 模式只写单文件
         if self._resolved_mode == EXPORT_MODE_LEGACY:
-            ensure_dir(os.path.join(self.export_dir, "decompile"))
+            ensure_dir(os.path.join(self.export_dir, "pseudocode"))
             ensure_dir(os.path.join(self.export_dir, "disassembly"))
 
         if self.force_reexport:
@@ -744,6 +744,7 @@ class _FuncExportJob(object):
             logger.info("All functions already exported!")
             return False  # 无需处理
 
+        self._remove_stale_result_logs()
         self._job_start_time = time.time()
 
         # 打开流式索引文件句柄（常数内存，每函数 append 一行，不再攒全量）
@@ -863,7 +864,7 @@ class _FuncExportJob(object):
                     return -1
             except Exception as e:
                 logger.error("Lazy init failed: %s", e, exc_info=True)
-                ida_kernwin.warning("Decompile init failed!\n\n{}".format(str(e)))
+                ida_kernwin.warning("Pseudocode export init failed!\n\n{}".format(str(e)))
                 enable_undo()
                 return -1
             self._initialized = True
@@ -1076,9 +1077,9 @@ class _FuncExportJob(object):
                         output_body = dec_str
                         export_type = "decompile"
                     else:
-                        fallback_reason = "empty decompilation result"
+                        fallback_reason = "empty pseudocode result"
             except ida_hexrays.DecompilationFailure as e:
-                fallback_reason = "decompilation failure: {}".format(str(e))
+                fallback_reason = "pseudocode export failure: {}".format(str(e))
             except Exception as e:
                 fallback_reason = "unexpected error: {}".format(str(e))
             finally:
@@ -1089,7 +1090,7 @@ class _FuncExportJob(object):
             decompile_elapsed = time.time() - decompile_start
             if decompile_elapsed > DECOMPILE_TIME_LIMIT:
                 _add_to_blacklist(self.export_dir, func_ea)
-                logger.warning("Decompile timeout (%.1fs) for %s @ %s, added to blacklist",
+                logger.warning("Pseudocode export timeout (%.1fs) for %s @ %s, added to blacklist",
                                decompile_elapsed, func_name, hex(func_ea))
 
         if output_body is None:
@@ -1170,7 +1171,7 @@ class _FuncExportJob(object):
         self.processed_addrs.add(func_ea)
         if export_type == "disassembly-fallback":
             self.fallback_funcs.append((func_ea, func_name,
-                                        fallback_reason or "decompilation failed", "decompiled.c"))
+                                        fallback_reason or "pseudocode export failed", "decompiled.c"))
         # 流式写索引（function_list.txt）
         self._append_index_line(func_ea, func_name, export_type, "decompiled.c",
                                 callers, callees, fallback_reason)
@@ -1222,7 +1223,7 @@ class _FuncExportJob(object):
                                     r_callers or [], r_callees or [], r_freason)
             if r_etype == "disassembly-fallback":
                 self.fallback_funcs.append((func_ea, func_name,
-                                            r_freason or "decompilation failed", out_fn))
+                                            r_freason or "pseudocode export failed", out_fn))
             self.exported_funcs += 1
             self.processed_addrs.add(func_ea)
         else:
@@ -1253,7 +1254,7 @@ class _FuncExportJob(object):
         if cancelled:
             logger.info("Export was cancelled by user")
 
-        logger.info("Decompilation Summary:")
+        logger.info("Pseudocode Export Summary:")
         logger.info("  Total functions   : %d", self.total_funcs)
         logger.info("  Exported          : %d", self.exported_funcs)
         logger.info("  Fallback (disasm) : %d", len(self.fallback_funcs))
@@ -1309,25 +1310,39 @@ class _FuncExportJob(object):
             logger.info("  Fallback list: disassembly_fallback.txt")
 
         if self.failed_funcs:
-            with open(os.path.join(ed, "decompile_failed.txt"), 'w', encoding='utf-8') as f:
-                f.write("# Failed to decompile {} functions\n".format(len(self.failed_funcs)))
+            with open(os.path.join(ed, "failed.txt"), 'w', encoding='utf-8') as f:
+                f.write("# Failed to export pseudocode for {} functions\n".format(len(self.failed_funcs)))
                 f.write("# Format: address | function_name | reason\n")
                 f.write("#" + "=" * 80 + "\n\n")
                 for addr, name, reason in self.failed_funcs:
                     f.write("{} | {} | {}\n".format(hex(addr), name, reason))
-            logger.info("  Failed list: decompile_failed.txt")
+            logger.info("  Failed list: failed.txt")
 
         if self.skipped_funcs:
-            with open(os.path.join(ed, "decompile_skipped.txt"), 'w', encoding='utf-8') as f:
+            with open(os.path.join(ed, "skipped.txt"), 'w', encoding='utf-8') as f:
                 f.write("# Skipped {} functions\n".format(len(self.skipped_funcs)))
                 f.write("# Format: address | function_name | reason\n")
                 f.write("#" + "=" * 80 + "\n\n")
                 for addr, name, reason in self.skipped_funcs:
                     f.write("{} | {} | {}\n".format(hex(addr), name, reason))
-            logger.info("  Skipped list: decompile_skipped.txt")
+            logger.info("  Skipped list: skipped.txt")
 
         # function_index.txt / function_list.txt 已由流式写入完成（_append_index_line），
         # 不再在这里做全量内存构建 — 原版的 addr_to_info 反向名字解析是内存+CPU 双重爆炸点。
+
+    def _remove_stale_result_logs(self):
+        for name in (
+            "failed.txt",
+            "skipped.txt",
+            "decompile_failed.txt",
+            "decompile_skipped.txt",
+        ):
+            path = os.path.join(self.export_dir, name)
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    logger.warning("Failed to remove stale log: %s", path)
 
 
 def export_decompiled_functions(export_dir, skip_existing=True, force_reexport=False, export_mode=None):
@@ -1378,7 +1393,7 @@ def export_strings(export_dir, min_len=0):
     BATCH_SIZE = 500  # 每500个字符串清理一次
 
     with open(strings_path, 'w', encoding='utf-8') as f:
-        f.write("# Strings exported from IDA\n")
+        f.write("# String Index\n")
         f.write("# Format: address | length | type | string\n")
         if min_len > 0:
             f.write("# (min_len filter={} applied)\n".format(min_len))
@@ -2066,13 +2081,6 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     path = os.path.join(export_dir, "AGENTS.md")
     consolidated = (resolved_mode == EXPORT_MODE_CONSOLIDATED)
 
-    func_table = (
-        "| `decompiled.c` | 合并反编译/反汇编回退代码，每个函数含元数据头 | consolidated 模式（大文件） |\n"
-        "| `decompile/` | 每个成功反编译函数一个 `.c` | legacy 模式（小文件） |\n"
-        "| `disassembly/` | 反编译失败回退，每个函数一个 `.asm` | legacy 模式 |"
-        if True else ""
-    )
-
     content = []
     content.append("# IDA Export for AI Analysis\n")
     content.append("> 本目录由 INP.py（IDA Export for AI）导出。下面是 AI 直接开始分析的导航指南。\n")
@@ -2083,8 +2091,8 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     content.append("\n## 目录布局\n")
     content.append("| 路径 | 内容 | 说明 |\n")
     content.append("| ---- | ---- | ---- |\n")
-    content.append("| `decompiled.c` | 合并反编译 + 回退代码，每函数含元数据头 | consolidated 模式 |\n")
-    content.append("| `decompile/` | 每个成功反编译函数一个 `.c` | legacy 模式 |\n")
+    content.append("| `decompiled.c` | 合并伪代码 + 回退代码，每函数含元数据头 | consolidated 模式 |\n")
+    content.append("| `pseudocode/` | 每个成功导出的伪代码函数一个 `.c` | legacy 模式 |\n")
     content.append("| `disassembly/` | 反编译失败回退，每函数一个 `.asm` | legacy 模式 |\n")
     content.append("| `function_index.txt` | 函数索引（含 callers/callees 地址） | legacy 模式 |\n")
     content.append("| `function_list.txt` | 函数列表（精简单行） | consolidated 模式 |\n")
@@ -2096,7 +2104,8 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     content.append("| `pointers.txt` | 指针引用：源 | 段 | 目标 | 类型 | 详情 | 始终 |\n")
     content.append("| `memory/` | 内存 hexdump（1MB 分片） | 仅 legacy 且未跳过 |\n")
     content.append("| `disassembly_fallback.txt` | 回退到反汇编的函数列表 | 有回退时 |\n")
-    content.append("| `decompile_failed.txt` | 彻底失败的函数列表 | 有失败时 |\n")
+    content.append("| `failed.txt` | 彻底失败的函数列表 | 有失败时 |\n")
+    content.append("| `skipped.txt` | 跳过的函数列表 | 有跳过时 |\n")
     content.append("\n## 元数据头字段（每个函数 `.c`/`.asm` 头部，或 `decompiled.c` 内）\n")
     content.append("```c\n")
     content.append("/*\n")
@@ -2111,7 +2120,7 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     content.append("\n## 建议分析工作流\n")
     content.append("1. **先读** `imports.txt` / `exports.txt` / `strings.txt` 建立全局观\n")
     content.append("2. **找入口**：`exports.txt`/`callgraph.txt`（consolidated）或 `function_index.txt` 中 callers 为空或为入口的函数\n")
-    content.append("3. **按地址跳转**：拿到目标函数 `0x401000` 后，在 `decompiled.c` 搜索 `func-address: 0x401000`，或在 `decompile/401000.c` 直接打开\n")
+    content.append("3. **按地址跳转**：拿到目标函数 `0x401000` 后，在 `decompiled.c` 搜索 `func-address: 0x401000`，或在 `pseudocode/401000.c` 直接打开\n")
     content.append("4. **追引用/调用链**：用 `xrefs.tsv` 查完整入向引用，用 `callers`/`callees` 或 `callgraph.txt` 顺藤摸瓜\n")
     content.append("5. **大文件**：优先用 `function_list.txt` + `callgraph.txt` 做索引，不要一次性把 `decompiled.c` 整个喂给 AI\n")
     content.append("\n## 备注\n")
@@ -2181,7 +2190,7 @@ class _ExportPipeline(object):
             self._phase_names.append("Analysis")
         self._phase_names.append("Init")
         self._phase_names.extend(["Strings", "Imports", "Exports", "Function Xrefs", "Pointers", "Memory"])
-        # Decompile 阶段在 _tick_init 确定有 Hex-Rays 后动态追加
+        # Pseudocode 阶段在 _tick_init 确定有 Hex-Rays 后动态追加
         self._total_phases = len(self._phase_names)
 
         # ---- Strings state ----
@@ -2216,14 +2225,14 @@ class _ExportPipeline(object):
         self._mem_total_bytes = 0
         self._mem_file_count = 0
 
-        # ---- Decompile state (job delegated to pipeline timer, no nested register_timer) ----
+        # ---- Pseudocode state (job delegated to pipeline timer, no nested register_timer) ----
         self._job = None  # _FuncExportJob 实例，通过 pipeline timer 直接驱动
 
     def start(self):
         global _active_pipeline
         _active_pipeline = self
 
-        ensure_dir(os.path.join(self.export_dir, "decompile"))
+        ensure_dir(os.path.join(self.export_dir, "pseudocode"))
         ensure_dir(os.path.join(self.export_dir, "disassembly"))
         ensure_dir(os.path.join(self.export_dir, "memory"))
 
@@ -2242,7 +2251,7 @@ class _ExportPipeline(object):
         """由 IDA 定时器调用。处理当前阶段的一个工作单元。"""
         self._tick_start = time.time()
 
-        # 检查用户取消（Decompile 阶段由 job 处理 cancel，避免 pipeline 抢先 _finish）
+        # 检查用户取消（Pseudocode 阶段由 job 处理 cancel，避免 pipeline 抢先 _finish）
         if not self._job_owns_wait_box() and self._wait_box_active and ida_kernwin.user_cancelled():
             self._finish(cancelled=True)
             return -1
@@ -2266,7 +2275,7 @@ class _ExportPipeline(object):
             "Pointers": self._tick_pointers,
             "Memory": self._tick_memory,
             "Callgraph": self._tick_callgraph,
-            "Decompile": self._tick_decompile,
+            "Pseudocode": self._tick_decompile,
         }
 
         try:
@@ -2331,11 +2340,11 @@ class _ExportPipeline(object):
         if self._resolved_mode == EXPORT_MODE_CONSOLIDATED:
             if "Memory" in self._phase_names:
                 self._phase_names.remove("Memory")
-            # Callgraph 插在 Decompile 之前
+            # Callgraph 插在 Pseudocode 之前
             if "Callgraph" not in self._phase_names:
-                # 找到 Decompile 位置（若已追加）；否则追加到末尾（Decompile 稍后动态加）
+                # 找到 Pseudocode 位置（若已追加）；否则追加到末尾（Pseudocode 稍后动态加）
                 try:
-                    idx = self._phase_names.index("Decompile")
+                    idx = self._phase_names.index("Pseudocode")
                 except ValueError:
                     idx = len(self._phase_names)
                 self._phase_names.insert(idx, "Callgraph")
@@ -2344,17 +2353,17 @@ class _ExportPipeline(object):
         # 3) 初始化 Hex-Rays 反编译器
         if ida_hexrays is None:
             self.has_hexrays = False
-            logger.warning("ida_hexrays module not available, skipping decompilation")
+            logger.warning("ida_hexrays module not available, skipping pseudocode export")
             return True
         if ida_hexrays.init_hexrays_plugin():
             self.has_hexrays = True
-            if "Decompile" not in self._phase_names:
-                self._phase_names.append("Decompile")
+            if "Pseudocode" not in self._phase_names:
+                self._phase_names.append("Pseudocode")
             self._total_phases = len(self._phase_names)
             logger.info("Hex-Rays decompiler initialized")
         else:
             self.has_hexrays = False
-            logger.warning("Hex-Rays decompiler not available, skipping decompilation")
+            logger.warning("Hex-Rays decompiler not available, skipping pseudocode export")
         return True
 
     # ------------------------------------------------------------------
@@ -2362,10 +2371,10 @@ class _ExportPipeline(object):
     # ------------------------------------------------------------------
 
     def _job_owns_wait_box(self):
-        """Decompile 阶段 job 已创建后，由 job 单独更新 wait box。"""
+        """Pseudocode 阶段 job 已创建后，由 job 单独更新 wait box。"""
         if self._phase >= len(self._phase_names):
             return False
-        if self._phase_names[self._phase] != "Decompile":
+        if self._phase_names[self._phase] != "Pseudocode":
             return False
         return self._phase_initialized and self._job is not None
 
@@ -2396,7 +2405,7 @@ class _ExportPipeline(object):
         if not self._phase_initialized:
             path = os.path.join(self.export_dir, "strings.txt")
             self._str_f = open(path, 'w', encoding='utf-8')
-            self._str_f.write("# Strings exported from IDA\n")
+            self._str_f.write("# String Index\n")
             self._str_f.write("# Format: address | length | type | string\n")
             self._str_f.write("#" + "=" * 80 + "\n\n")
             self._str_iter = iter(idautils.Strings())
@@ -2748,7 +2757,7 @@ class _ExportPipeline(object):
         return True
 
     # ------------------------------------------------------------------
-    # Stage: Decompile (通过 pipeline timer 直接驱动，不嵌套 register_timer)
+    # Stage: Pseudocode (通过 pipeline timer 直接驱动，不嵌套 register_timer)
     # ------------------------------------------------------------------
 
     def _tick_decompile(self):
@@ -2842,7 +2851,7 @@ class _ExportPipeline(object):
             logger.info("Export completed (no Hex-Rays)")
             ida_kernwin.info("Export completed (no decompiler)!\n\nTime: {}\nOutput: {}".format(
                 elapsed_str, self.export_dir))
-        # 注：有 Hex-Rays 且 Decompile 阶段正常完成时，完成对话框已由 job._finish() 显示，
+        # 注：有 Hex-Rays 且 Pseudocode 阶段正常完成时，完成对话框已由 job._finish() 显示，
         #     pipeline 这里不再重复弹窗（避免双重对话框）。
 
 
@@ -2964,13 +2973,13 @@ def do_export_sync(export_dir=None, skip_auto_analysis=False, worker_count=None,
             logger.info("Auto-analysis completed")
 
         if ida_hexrays is None:
-            logger.warning("ida_hexrays module not available, decompilation will fall back to disassembly")
+            logger.warning("ida_hexrays module not available, pseudocode export will fall back to disassembly")
         else:
             try:
                 if ida_hexrays.init_hexrays_plugin():
                     logger.info("Hex-Rays decompiler initialized")
                 else:
-                    logger.warning("Hex-Rays decompiler not available, decompilation will fall back to disassembly")
+                    logger.warning("Hex-Rays decompiler not available, pseudocode export will fall back to disassembly")
             except Exception as e:
                 logger.warning("Failed to initialize Hex-Rays: %s", str(e))
 
@@ -3073,7 +3082,7 @@ class ExportForAIPlugin(ida_idaapi.plugin_t):
 
     flags = ida_idaapi.PLUGIN_MULTI
     comment = "Export IDA data for AI analysis"
-    help = "Export decompiled functions with disassembly fallback, strings, memory, imports and exports"
+    help = "Export pseudocode with disassembly fallback, strings, memory, imports and exports"
     wanted_name = "Export for AI"
     wanted_hotkey = "Ctrl-Shift-E"
 

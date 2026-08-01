@@ -18,7 +18,7 @@ use crate::names::render_symbol_name;
 pub fn export_strings(idb: &IDB, out_dir: &Path, min_len: usize) -> Result<usize> {
     let path = out_dir.join("strings.txt");
     let mut w = BufWriter::new(File::create(&path)?);
-    writeln!(w, "# Strings exported from IDA")?;
+    writeln!(w, "# String Index")?;
     writeln!(w, "# Format: address | length | string")?;
     if min_len > 0 {
         writeln!(w, "# (min_len filter={} applied)", min_len)?;

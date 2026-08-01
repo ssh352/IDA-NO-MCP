@@ -85,7 +85,11 @@ pub const DECOMPILE_CACHE_CLEAR_LEGACY: usize = 500;
 
 /// CLI options.
 #[derive(Parser, Debug)]
-#[command(name = "inp", version, about = "IDA export for AI analysis (Rust, idalib)")]
+#[command(
+    name = "inp",
+    version,
+    about = "IDA export for AI analysis (Rust, idalib)"
+)]
 pub struct Cli {
     /// Path to the input binary OR an existing .i64 IDB.
     pub input: PathBuf,

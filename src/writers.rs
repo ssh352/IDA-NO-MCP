@@ -4,7 +4,7 @@
 // and writes them to disk. Two layouts:
 //   - Consolidated: append every function into a single streaming `decompiled.c`
 //     plus a single `function_list.txt`. O(1) memory, O(N) files = 1.
-//   - Legacy: one `.c`/`.asm` per function in `decompile/`+`disassembly/`,
+//   - Legacy: one `.c`/`.asm` per function in `pseudocode/`+`disassembly/`,
 //     plus a streaming `function_index.txt`. O(1) memory, O(N) files.
 //
 // All files are kept open with BufWriter and flushed on close, so a kill -9
@@ -87,9 +87,9 @@ impl Writer {
 
     // ---- Legacy: per-function files + streaming function_index.txt ----
     fn run_legacy(self, rx: mpsc::Receiver<DecResult>) -> Result<DecompStats> {
-        let decomp_dir = self.out_dir.join("decompile");
+        let pseudocode_dir = self.out_dir.join("pseudocode");
         let disasm_dir = self.out_dir.join("disassembly");
-        std::fs::create_dir_all(&decomp_dir)?;
+        std::fs::create_dir_all(&pseudocode_dir)?;
         std::fs::create_dir_all(&disasm_dir)?;
 
         let idx_path = self.out_dir.join("function_index.txt");
@@ -103,7 +103,7 @@ impl Writer {
 
         for r in rx.iter() {
             let (subdir, ext) = match r.export_type {
-                ExportType::Decompile => ("decompile", "c"),
+                ExportType::Decompile => ("pseudocode", "c"),
                 ExportType::DisassemblyFallback => ("disassembly", "asm"),
             };
             let fname = format!("{:X}.{}", r.start_ea, ext);

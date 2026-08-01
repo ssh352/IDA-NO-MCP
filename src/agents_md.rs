@@ -22,11 +22,11 @@ pub fn write_agents_md(out_dir: &Path, mode: ExportMode, func_count: usize) -> R
     s.push_str("## Export mode\n\n");
     s.push_str(&format!("- **resolved mode**: `{}`\n", mode.as_str()));
     s.push_str(&format!("- **total functions**: {}\n", func_count));
-    s.push_str("- legacy = per-function files; consolidated = single decompiled.c\n\n");
+    s.push_str("- legacy = per-function pseudocode files; consolidated = single decompiled.c\n\n");
     s.push_str("## Directory layout\n\n");
     s.push_str("| path | contents |\n| ---- | -------- |\n");
-    s.push_str("| `decompiled.c` | all functions, each with a metadata header (consolidated) |\n");
-    s.push_str("| `decompile/` | one `.c` per decompiled function (legacy) |\n");
+    s.push_str("| `decompiled.c` | all pseudocode/fallback output, each function with a metadata header (consolidated) |\n");
+    s.push_str("| `pseudocode/` | one `.c` per exported pseudocode function (legacy) |\n");
     s.push_str("| `disassembly/` | one `.asm` per fallback function (legacy) |\n");
     s.push_str("| `function_list.txt` | `addr | name | type | fallback_reason` (consolidated) |\n");
     s.push_str("| `function_index.txt` | full function index (legacy) |\n");

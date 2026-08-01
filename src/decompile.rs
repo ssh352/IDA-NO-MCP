@@ -69,9 +69,7 @@ pub fn run_decompile_pass(
 ) -> Result<DecompStats> {
     let (tx, rx) = mpsc::channel::<DecResult>();
     let writer = writer;
-    let writer_thread = thread::spawn(move || -> Result<DecompStats> {
-        writer.run(rx, mode)
-    });
+    let writer_thread = thread::spawn(move || -> Result<DecompStats> { writer.run(rx, mode) });
 
     let mut stats = DecompStats::default();
     let total = funcs.len();
@@ -149,7 +147,7 @@ fn decompile_one(idb: &IDB, func: &DiscoveredFunc, decompiler_ok: bool) -> Optio
                         );
                     }
                     if body.trim().is_empty() {
-                        return disassembly_fallback(idb, func, "empty decompilation result");
+                        return disassembly_fallback(idb, func, "empty pseudocode result");
                     }
                     return Some(DecResult {
                         start_ea,
@@ -160,7 +158,7 @@ fn decompile_one(idb: &IDB, func: &DiscoveredFunc, decompiler_ok: bool) -> Optio
                     });
                 }
                 Err(e) => {
-                    let reason = format!("decompilation failure: {}", e);
+                    let reason = format!("pseudocode export failure: {}", e);
                     return disassembly_fallback(idb, func, &reason);
                 }
             }
@@ -195,7 +193,11 @@ fn disassembly_fallback(idb: &IDB, func: &DiscoveredFunc, reason: &str) -> Optio
         // disasm rendering, so emit 16 bytes per line as a hex window.
         let chunk_len = std::cmp::min(16, end - ea);
         let bytes = idb.get_bytes(ea.into(), chunk_len as usize);
-        let hex: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+        let hex: String = bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
         lines.push(format!("{:X}: {}", ea, hex));
         match idb.next_head_with(ea.into(), end.into()) {
             Some(next) if u64::from(next) > ea => ea = u64::from(next),
@@ -212,7 +214,10 @@ fn disassembly_fallback(idb: &IDB, func: &DiscoveredFunc, reason: &str) -> Optio
         return None; // genuine failure — no bytes either
     }
     // Note the lower fidelity in the body so downstream consumers are aware.
-    lines.insert(0, "// (raw bytes — idalib has no disasm text renderer; decompiler failed)".to_string());
+    lines.insert(
+        0,
+        "// (raw bytes — idalib has no disasm text renderer; decompiler failed)".to_string(),
+    );
     Some(DecResult {
         start_ea: func.start_ea,
         name: func.name.clone(),

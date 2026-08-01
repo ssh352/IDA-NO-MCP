@@ -12,7 +12,7 @@ Simple · Fast · Intelligent · Low Cost
 
 Text, Source Code, and Shell are LLM's native languages.
 
-AI is evolving rapidly with no fixed patterns—tools should stay simple. Export IDA decompilation results as source files, drop them into any AI IDE (Cursor / Claude Code / ...), and naturally benefit from indexing, parallelism, chunking (for huge decompiled functions), and other optimizations.
+AI is evolving rapidly with no fixed patterns—tools should stay simple. Export IDA pseudocode results as source files, drop them into any AI IDE (Cursor / Claude Code / ...), and naturally benefit from indexing, parallelism, chunking (for huge pseudocode functions), and other optimizations.
 
 ## Usage
 
@@ -33,12 +33,12 @@ After restarting IDA:
 
 | File/Directory          | Content                    | Description                                                                                 |
 | ----------------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
-| `decompile/`            | Decompiled C code          | Each successfully decompiled function as a `.c` file, with function name, address, callers, callees |
-| `disassembly/`          | Disassembly fallback code  | Falls back to disassembly when decompilation fails, one `.asm` file per function with the same metadata |
+| `pseudocode/`            | Pseudocode C output        | Each successfully exported pseudocode function as a `.c` file, with function name, address, callers, callees |
+| `disassembly/`          | Disassembly fallback code  | Falls back to disassembly when pseudocode export fails, one `.asm` file per function with the same metadata |
 | `xrefs.tsv`             | Full inbound xrefs         | Single TSV index of code/data refs to function entry addresses; avoids many per-function xref files |
 | `disassembly_fallback.txt` | Disassembly fallback list | Records fallback functions, fallback reasons, and output file paths                         |
-| `decompile_failed.txt`  | Hard failure list          | Records functions where both decompilation and disassembly fallback failed                  |
-| `decompile_skipped.txt` | Skipped functions list     | Records skipped library functions and invalid functions                                     |
+| `failed.txt`            | Hard failure list          | Records functions where both pseudocode export and disassembly fallback failed              |
+| `skipped.txt`           | Skipped functions list     | Records skipped library functions and invalid functions                                     |
 | `strings.txt`           | String table               | Includes address, length, type (ASCII/UTF-16/UTF-32), content                               |
 | `imports.txt`           | Import table               | Format: `address:function_name`                                                             |
 | `exports.txt`           | Export table               | Format: `address:function_name`                                                             |
@@ -46,9 +46,9 @@ After restarting IDA:
 
 ## Features
 
-### Decompiled Function Export
+### Pseudocode Export
 
-Each function is exported as a separate `.c` file when decompilation succeeds. If decompilation fails, the function is exported to `disassembly/` as a `.asm` file instead. Both outputs keep the same metadata header:
+Each function is exported as a separate `.c` file when pseudocode export succeeds. If pseudocode export fails, the function is exported to `disassembly/` as a `.asm` file instead. Both outputs keep the same metadata header:
 
 ```c
 /*
@@ -59,13 +59,13 @@ Each function is exported as a separate `.c` file when decompilation succeeds. I
  * callees: 0x404000, 0x405000
  */
 
-// Decompiled code...
+// Pseudocode...
 ```
 
 **Smart Handling**:
 
 - Automatically skips library functions and invalid functions
-- Automatically falls back to disassembly export when decompilation fails
+- Automatically falls back to disassembly export when pseudocode export fails
 - Python plugin exports C++/Rust-style symbols as `demangled (mangled)` when IDA can demangle them
 - Handles special characters and duplicate function names (adds address suffix)
 - Generates detailed fallback, failure, and skip logs
