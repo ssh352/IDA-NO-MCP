@@ -185,6 +185,7 @@ idat -A -S"INP.py /tmp/out 0 consolidated" huge_framework.i64
 | `disassembly/`          | 反汇编回退代码 | 反编译失败时回退到反汇编导出，每个函数一个`.asm` 文件，保留相同元数据（legacy）       |
 | `function_list.txt`     | 函数列表       | **consolidated 模式**：每函数单行 `地址 \| 名 \| 类型 \| 回退原因`            |
 | `function_index.txt`    | 函数索引       | **legacy 模式**：每函数含 callers/callees 地址（流式写，不在内存攒全量）       |
+| `xrefs.tsv`             | 完整入向引用索引 | 单个 TSV 文件，记录指向函数入口地址的 code/data xrefs，避免生成海量 `xrefs/0xADDR.txt` |
 | `callgraph.txt`         | 采样调用图     | **consolidated 模式**：从 entry/export 出发 N 跳 BFS 的关注子图               |
 | `AGENTS.md`             | AI 导航上下文  | 让 Cursor / Claude Code 等 AI 自动理解导出布局，无需每次重新学习（始终生成）   |
 | `disassembly_fallback.txt` | 反汇编回退列表 | 记录使用反汇编回退的函数、失败原因和输出文件路径                                     |

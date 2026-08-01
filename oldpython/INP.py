@@ -53,6 +53,7 @@ LARGE_CALLGRAPH_BFS_HOPS = 3         # consolidated 模式下，从 entry/export
 LARGE_CALLGRAPH_MAX_NODES = 5000     # consolidated 模式下，callgraph.txt 最多保留的节点数
 LARGE_STRING_MIN_LEN = 4             # consolidated 模式下，strings.txt 最小字符串长度（过滤噪声、省 token）
 LARGE_BATCH_PER_TICK = 8             # 每个 timer tick 处理的函数数（大文件批处理，提升吞吐）
+XREF_FUNCS_PER_TICK = 256            # 每个 timer tick 处理的函数 xref 数，避免 UI 阻塞
 # Hex-Rays cfunc_t 缓存清理间隔（函数数）
 #   legacy       : 500（小文件，缓存压力小）
 #   consolidated : 100（大文件，Hex-Rays 反编译缓存 ~130KB/func，不勤清会持续涨）
@@ -1474,6 +1475,116 @@ def export_exports(export_dir):
     logger.info("  Total exports exported: %d", export_count)
 
 
+# ============================================================================
+# Streamed full inbound xrefs to function entries
+# ============================================================================
+
+def _tsv_field(value):
+    if value is None:
+        return ""
+    text = str(value)
+    return (text
+            .replace("\\", "\\\\")
+            .replace("\t", "\\t")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n"))
+
+
+def _xref_type(ref):
+    try:
+        ref_is_code = getattr(ref, "iscode", None)
+        if callable(ref_is_code):
+            ref_is_code = ref_is_code()
+        if ref_is_code is not None:
+            return "code" if ref_is_code else "data"
+
+        ref_type = getattr(ref, "type", None)
+        code_xref_types = set(
+            getattr(ida_xref, name)
+            for name in ("fl_F", "fl_CF", "fl_CN", "fl_JF", "fl_JN")
+            if hasattr(ida_xref, name)
+        )
+        if ref_type in code_xref_types:
+            return "code"
+
+        data_xref_types = set(
+            getattr(ida_xref, name)
+            for name in ("dr_O", "dr_W", "dr_R", "dr_T", "dr_I", "dr_S")
+            if hasattr(ida_xref, name)
+        )
+        if ref_type in data_xref_types:
+            return "data"
+
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _xref_caller_info(from_ea):
+    caller_func = ida_funcs.get_func(from_ea)
+    if not caller_func:
+        return "", "unknown"
+    caller_ea = caller_func.start_ea
+    return hex(caller_ea), get_rendered_function_name(caller_ea)
+
+
+def _write_xrefs_header(f):
+    f.write("# Full inbound references to function entry addresses\n")
+    f.write("# Format: target_addr\ttarget_name\tfrom_addr\tref_type\tcaller_func_addr\tcaller_func_name\n")
+    f.write("#" + "=" * 80 + "\n")
+
+
+def _write_function_xrefs(f, func_ea):
+    target_name = get_rendered_function_name(func_ea)
+    rows = []
+
+    try:
+        xrefs_iter = idautils.XrefsTo(func_ea, 0)
+    except Exception:
+        return 0
+
+    for ref in xrefs_iter:
+        caller_addr, caller_name = _xref_caller_info(ref.frm)
+        rows.append((
+            ref.frm,
+            hex(func_ea),
+            target_name,
+            hex(ref.frm),
+            _xref_type(ref),
+            caller_addr,
+            caller_name,
+        ))
+
+    for _sort_addr, target_addr, target_name, from_addr, ref_type, caller_addr, caller_name in sorted(rows):
+        f.write("{}\t{}\t{}\t{}\t{}\t{}\n".format(
+            target_addr,
+            _tsv_field(target_name),
+            from_addr,
+            _tsv_field(ref_type),
+            _tsv_field(caller_addr),
+            _tsv_field(caller_name),
+        ))
+    return len(rows)
+
+
+def export_xrefs_stream(export_dir):
+    """Export inbound xrefs as one streamed TSV file instead of per-function files."""
+    output_path = os.path.join(export_dir, "xrefs.tsv")
+    total_xrefs = 0
+    func_count = 0
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        _write_xrefs_header(f)
+        for func_ea in idautils.Functions():
+            total_xrefs += _write_function_xrefs(f, func_ea)
+            func_count += 1
+            if func_count % 5000 == 0:
+                logger.info("Xrefs progress: %d functions, %d refs", func_count, total_xrefs)
+
+    logger.info("Xrefs exported to %s: %d refs across %d functions",
+                output_path, total_xrefs, func_count)
+
+
 def export_memory(export_dir):
     """导出内存数据，按 1MB 分割，hexdump 格式"""
     memory_dir = os.path.join(export_dir, "memory")
@@ -1977,6 +2088,7 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     content.append("| `disassembly/` | 反编译失败回退，每函数一个 `.asm` | legacy 模式 |\n")
     content.append("| `function_index.txt` | 函数索引（含 callers/callees 地址） | legacy 模式 |\n")
     content.append("| `function_list.txt` | 函数列表（精简单行） | consolidated 模式 |\n")
+    content.append("| `xrefs.tsv` | 函数入口地址的完整入向 xrefs（含 code/data） | 始终 |\n")
     content.append("| `callgraph.txt` | 从 entry/export 采样的调用图 | consolidated 模式 |\n")
     content.append("| `strings.txt` | 字符串表：地址 | 长度 | 类型 | 内容 | 始终 |\n")
     content.append("| `imports.txt` | 导入表：地址:函数名 | 始终 |\n")
@@ -2000,12 +2112,12 @@ def write_agents_md(export_dir, resolved_mode, total_funcs=0, skipped_memory=Fal
     content.append("1. **先读** `imports.txt` / `exports.txt` / `strings.txt` 建立全局观\n")
     content.append("2. **找入口**：`exports.txt`/`callgraph.txt`（consolidated）或 `function_index.txt` 中 callers 为空或为入口的函数\n")
     content.append("3. **按地址跳转**：拿到目标函数 `0x401000` 后，在 `decompiled.c` 搜索 `func-address: 0x401000`，或在 `decompile/401000.c` 直接打开\n")
-    content.append("4. **追调用链**：用 `callers`/`callees` 地址或 `callgraph.txt` 顺藤摸瓜\n")
+    content.append("4. **追引用/调用链**：用 `xrefs.tsv` 查完整入向引用，用 `callers`/`callees` 或 `callgraph.txt` 顺藤摸瓜\n")
     content.append("5. **大文件**：优先用 `function_list.txt` + `callgraph.txt` 做索引，不要一次性把 `decompiled.c` 整个喂给 AI\n")
     content.append("\n## 备注\n")
     if consolidated:
         content.append("- 本目录是 **consolidated 模式**（{} 函数）：每函数文件已合并，raw memory 已跳过以省 token。\n".format(total_funcs))
-        content.append("- caller/callee 单函数粒度的图未生成，请用 `callgraph.txt` 做调用关系导航。\n")
+        content.append("- caller/callee 单函数粒度的图未生成，请用 `xrefs.tsv` 查完整入向引用，用 `callgraph.txt` 做采样调用关系导航。\n")
     else:
         content.append("- 本目录是 **legacy 模式**：每个函数独立文件，`function_index.txt` 含完整 callers/callees 地址。\n")
     if skipped_memory:
@@ -2068,7 +2180,7 @@ class _ExportPipeline(object):
         if not skip_auto_analysis:
             self._phase_names.append("Analysis")
         self._phase_names.append("Init")
-        self._phase_names.extend(["Strings", "Imports", "Exports", "Pointers", "Memory"])
+        self._phase_names.extend(["Strings", "Imports", "Exports", "Function Xrefs", "Pointers", "Memory"])
         # Decompile 阶段在 _tick_init 确定有 Hex-Rays 后动态追加
         self._total_phases = len(self._phase_names)
 
@@ -2090,6 +2202,12 @@ class _ExportPipeline(object):
         self._ptr_raw_seg_idx = 0
         self._ptr_heads_iter = None     # dxref 扫描的 heads 迭代器
         self._ptr_raw_heads_iter = None # raw pointer 扫描的 heads 迭代器
+
+        # ---- Function xrefs state ----
+        self._xref_funcs = []
+        self._xref_idx = 0
+        self._xref_count = 0
+        self._xref_f = None
 
         # ---- Memory state ----
         self._mem_segs = []
@@ -2144,6 +2262,7 @@ class _ExportPipeline(object):
             "Strings": self._tick_strings,
             "Imports": self._tick_imports,
             "Exports": self._tick_exports,
+            "Function Xrefs": self._tick_xrefs,
             "Pointers": self._tick_pointers,
             "Memory": self._tick_memory,
             "Callgraph": self._tick_callgraph,
@@ -2336,6 +2455,47 @@ class _ExportPipeline(object):
     def _tick_exports(self):
         export_exports(self.export_dir)
         return True
+
+    # ------------------------------------------------------------------
+    # Stage: Function Xrefs (增量写入单个 xrefs.tsv)
+    # ------------------------------------------------------------------
+
+    def _tick_xrefs(self):
+        if not self._phase_initialized:
+            path = os.path.join(self.export_dir, "xrefs.tsv")
+            self._xref_f = open(path, 'w', encoding='utf-8')
+            _write_xrefs_header(self._xref_f)
+            self._xref_funcs = list(idautils.Functions())
+            self._xref_idx = 0
+            self._xref_count = 0
+            self._phase_initialized = True
+
+        processed = 0
+        while self._xref_idx < len(self._xref_funcs) and processed < XREF_FUNCS_PER_TICK:
+            if processed > 0 and self._should_yield():
+                return False
+            func_ea = self._xref_funcs[self._xref_idx]
+            self._xref_idx += 1
+            processed += 1
+            try:
+                self._xref_count += _write_function_xrefs(self._xref_f, func_ea)
+            except Exception as e:
+                logger.debug("Failed to export xrefs for %s: %s", hex(func_ea), e)
+
+        if self._xref_idx >= len(self._xref_funcs):
+            if self._xref_f is not None and not self._xref_f.closed:
+                self._xref_f.flush()
+                self._xref_f.close()
+            self._xref_f = None
+            logger.info("Exported %d xrefs across %d functions",
+                        self._xref_count, len(self._xref_funcs))
+            self._xref_funcs = []
+            return True
+
+        if self._xref_idx % 5000 == 0:
+            logger.info("Xrefs progress: %d/%d functions, %d refs",
+                        self._xref_idx, len(self._xref_funcs), self._xref_count)
+        return False
 
     # ------------------------------------------------------------------
     # Stage: Pointers (增量，每 tick 处理一个段)
@@ -2646,6 +2806,9 @@ class _ExportPipeline(object):
         if self._str_f is not None and not self._str_f.closed:
             self._str_f.close()
             self._str_f = None
+        if self._xref_f is not None and not self._xref_f.closed:
+            self._xref_f.close()
+            self._xref_f = None
 
         if self._wait_box_active:
             for _ in range(3):
@@ -2824,6 +2987,7 @@ def do_export_sync(export_dir=None, skip_auto_analysis=False, worker_count=None,
 
         export_imports(export_dir)
         export_exports(export_dir)
+        export_xrefs_stream(export_dir)
         export_pointers(export_dir)
 
         # consolidated 模式：跳过 raw memory（对 AI 价值低、最占 token），并生成采样调用图

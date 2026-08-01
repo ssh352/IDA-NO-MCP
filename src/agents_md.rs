@@ -30,6 +30,7 @@ pub fn write_agents_md(out_dir: &Path, mode: ExportMode, func_count: usize) -> R
     s.push_str("| `disassembly/` | one `.asm` per fallback function (legacy) |\n");
     s.push_str("| `function_list.txt` | `addr | name | type | fallback_reason` (consolidated) |\n");
     s.push_str("| `function_index.txt` | full function index (legacy) |\n");
+    s.push_str("| `xrefs.tsv` | full inbound refs to function entry addresses |\n");
     s.push_str("| `callgraph.txt` | sampled call graph from entries/exports |\n");
     s.push_str("| `strings.txt` | `addr | len | string` (filtered in consolidated) |\n");
     s.push_str("| `exports.txt` / `imports.txt` | entry points / extern names |\n");
@@ -41,7 +42,9 @@ pub fn write_agents_md(out_dir: &Path, mode: ExportMode, func_count: usize) -> R
     s.push_str("1. Read `imports.txt` / `exports.txt` / `strings.txt` for the global picture.\n");
     s.push_str("2. Find entry points in `exports.txt` / `callgraph.txt`.\n");
     s.push_str("3. Jump to a function by searching `func-address: 0xADDR` in `decompiled.c`.\n");
-    s.push_str("4. Trace calls via `callgraph.txt`.\n");
+    s.push_str(
+        "4. Trace exact inbound refs with `xrefs.tsv`; trace sampled calls via `callgraph.txt`.\n",
+    );
     if consolidated {
         s.push_str("\n**Consolidated mode**: raw `memory/` is skipped; per-function caller/callee\nwalks are replaced by the sampled `callgraph.txt`.\n");
     }

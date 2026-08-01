@@ -35,6 +35,7 @@ After restarting IDA:
 | ----------------------- | -------------------------- | ------------------------------------------------------------------------------------------- |
 | `decompile/`            | Decompiled C code          | Each successfully decompiled function as a `.c` file, with function name, address, callers, callees |
 | `disassembly/`          | Disassembly fallback code  | Falls back to disassembly when decompilation fails, one `.asm` file per function with the same metadata |
+| `xrefs.tsv`             | Full inbound xrefs         | Single TSV index of code/data refs to function entry addresses; avoids many per-function xref files |
 | `disassembly_fallback.txt` | Disassembly fallback list | Records fallback functions, fallback reasons, and output file paths                         |
 | `decompile_failed.txt`  | Hard failure list          | Records functions where both decompilation and disassembly fallback failed                  |
 | `decompile_skipped.txt` | Skipped functions list     | Records skipped library functions and invalid functions                                     |

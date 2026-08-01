@@ -13,6 +13,7 @@ mod metadata;
 mod names;
 mod paths;
 mod writers;
+mod xrefs;
 
 use std::time::Instant;
 
@@ -62,23 +63,29 @@ fn main() -> Result<()> {
     // Phase 1: metadata (strings/imports/exports).
     metadata::run_all(&idb, &out_dir, consolidated)?;
 
-    // Phase 2: decompile pass (main thread drives IDA, writer thread does I/O).
+    // Phase 2: full function-entry xref index.
+    match xrefs::export_function_xrefs(&idb, &funcs, &out_dir) {
+        Ok(count) => eprintln!("[inp] xrefs: {} refs -> xrefs.tsv", count),
+        Err(e) => eprintln!("[inp] xref export failed: {}", e),
+    }
+
+    // Phase 3: decompile pass (main thread drives IDA, writer thread does I/O).
     let writer = Writer::new(out_dir.clone());
     let stats = decompile::run_decompile_pass(&idb, &funcs, resolved, writer)?;
 
-    // Phase 3: callgraph (sampled from entries/exports).
+    // Phase 4: callgraph (sampled from entries/exports).
     if let Err(e) = callgraph::export_callgraph(&idb, &out_dir) {
         eprintln!("[inp] callgraph export failed: {}", e);
     }
 
-    // Phase 4: memory hexdump (legacy only — consolidated skips for token savings).
+    // Phase 5: memory hexdump (legacy only — consolidated skips for token savings).
     if !consolidated {
         if let Err(e) = hexdump::export_memory(&idb, &out_dir) {
             eprintln!("[inp] memory export failed: {}", e);
         }
     }
 
-    // Phase 5: AGENTS.md (AI auto-start context).
+    // Phase 6: AGENTS.md (AI auto-start context).
     agents_md::write_agents_md(&out_dir, resolved, total)?;
 
     let el = t0.elapsed().as_secs_f64();
